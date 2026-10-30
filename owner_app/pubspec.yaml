@@ -1,0 +1,42 @@
+name: als_owner
+description: "Al's Owner — the owner dashboard as a native Android & iOS app (screens live in package:als/owner)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # All owner screens, state and API code come from the main project.
+  als:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+
+# dart run flutter_launcher_icons && dart run flutter_native_splash:create
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/owner_icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#5A210F"
+  adaptive_icon_foreground: "assets/icon/owner_icon_foreground.png"
+
+flutter_native_splash:
+  color: "#5A210F"
+  image: assets/icon/owner_splash.png
+  android_12:
+    color: "#5A210F"
+    image: assets/icon/owner_splash.png

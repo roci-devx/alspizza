@@ -1,0 +1,273 @@
+// Al's Pizza data model.
+// SQLite is used for local development. For production switch `provider` to
+// "postgresql" and point DATABASE_URL at your Postgres instance — the schema
+// avoids SQLite-only features so it ports without changes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String?   @unique
+  phone           String?
+  name            String?
+  passwordHash    String?
+  role            String    @default("customer") // customer | owner
+  isGuest         Boolean   @default(false)
+  marketingSource String? // "How did you hear about us?" answer at signup
+  platform        String? // ios | android | web — where we first saw them
+  createdAt       DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  addresses       Address[]
+  orders          Order[]
+}
+
+model Address {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label        String   @default("Home")
+  line1        String
+  line2        String?
+  city         String
+  state        String
+  zip          String
+  lat          Float
+  lng          Float
+  instructions String?
+  createdAt    DateTime @default(now())
+}
+
+model Store {
+  id                   String        @id @default(cuid())
+  slug                 String        @unique
+  name                 String
+  phone                String
+  line1                String
+  city                 String
+  state                String
+  zip                  String
+  lat                  Float
+  lng                  Float
+  timezone             String        @default("America/Chicago")
+  hoursJson            String // {"mon":["11:00","23:00"], ...} — close past midnight allowed ("02:00")
+  acceptingOrders      Boolean       @default(true)
+  pickupEnabled        Boolean       @default(true)
+  deliveryEnabled      Boolean       @default(true)
+  taxRate              Float         @default(0.1025)
+  // Delivery
+  deliveryMode         String        @default("auto") // auto | own | doordash | uber
+  ownDriversOnDuty     Int           @default(0)
+  ownDeliveryFeeCents  Int           @default(299)
+  deliveryFeeMode      String        @default("flat") // flat | passthrough
+  flatDeliveryFeeCents Int           @default(399)
+  deliveryRadiusMiles  Float         @default(6)
+  minDeliveryCents     Int           @default(1200)
+  // Kitchen
+  queueMinutesPerOrder Int           @default(2)
+  // POS
+  posProvider          String        @default("none") // none | square | clover | toast
+  posLocationId        String?
+  // Payments
+  cashEnabled          Boolean       @default(true)
+  // Reporting
+  reportTime           String        @default("23:30")
+  reportEmail          String?
+  createdAt            DateTime      @default(now())
+  orders               Order[]
+  reports              DailyReport[]
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  name        String
+  tagline     String?
+  sortOrder   Int        @default(0)
+  prepMinutes Int        @default(15) // owner-controlled pickup ETA per food type
+  items       MenuItem[]
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  name        String
+  description String
+  kind        String // pizza | wings | side | pasta | dessert | drink | dip | deal
+  priceCents  Int // display "from" price
+  calories    String?
+  imageUrl    String? // optional real photo; the apps fall back to the illustration in `art`
+  art         String // illustration key used by the apps
+  configJson  String // kind-specific options (sizes, variants, choices, default toppings…)
+  tags        String   @default("") // comma separated: popular,new,veg,spicy
+  isAvailable Boolean  @default(true)
+  prepMinutes Int? // overrides the category prep time
+  sortOrder   Int      @default(0)
+}
+
+model Order {
+  id                  String        @id @default(cuid())
+  number              Int           @unique
+  storeId             String
+  store               Store         @relation(fields: [storeId], references: [id])
+  userId              String?
+  user                User?         @relation(fields: [userId], references: [id])
+  customerKey         String // stable identity used for repeat-customer analytics
+  status              String        @default("pending_payment") // pending_payment | received | preparing | ready | out_for_delivery | completed | cancelled
+  fulfillment         String // pickup | delivery
+  customerName        String
+  customerPhone       String
+  customerEmail       String?
+  addressJson         String?
+  itemsCount          Int           @default(0)
+  subtotalCents       Int
+  discountCents       Int           @default(0)
+  deliveryFeeCents    Int           @default(0)
+  taxCents            Int
+  tipCents            Int           @default(0)
+  totalCents          Int
+  promoCode           String?
+  promoChannel        String?
+  deliveryQuoteId     String?
+  paymentProvider     String // stripe | paypal | cash | demo
+  paymentStatus       String        @default("unpaid") // unpaid | paid | pay_at_pickup | refunded | failed
+  paymentRef          String?
+  paymentMethod       String? // "Apple Pay", "Visa •••• 4242", "PayPal", "Cash"
+  platform            String        @default("web") // ios | android | web
+  notes               String?
+  estimatedReadyAt    DateTime?
+  estimatedDeliveryAt DateTime?
+  posProvider         String?
+  posOrderId          String?
+  posError            String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  paidAt              DateTime?
+  preparingAt         DateTime?
+  readyAt             DateTime?
+  outForDeliveryAt    DateTime?
+  completedAt         DateTime?
+  cancelledAt         DateTime?
+  items               OrderItem[]
+  delivery            Delivery?
+  messages            ChatMessage[]
+
+  @@index([storeId, createdAt])
+  @@index([customerKey])
+  @@index([status])
+}
+
+model OrderItem {
+  id             String @id @default(cuid())
+  orderId        String
+  order          Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId     String
+  name           String
+  kind           String
+  categorySlug   String
+  art            String
+  quantity       Int
+  unitPriceCents Int
+  totalCents     Int
+  summary        String
+  configJson     String
+}
+
+model Delivery {
+  id               String    @id @default(cuid())
+  orderId          String    @unique
+  order            Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider         String // doordash | uber | own | simulated
+  externalId       String    @unique
+  status           String    @default("created")
+  providerFeeCents Int       @default(0) // what the courier network charges the store
+  trackingUrl      String?
+  driverName       String?
+  driverPhone      String?
+  driverVehicle    String?
+  driverLat        Float?
+  driverLng        Float?
+  pickupEta        DateTime?
+  dropoffEta       DateTime?
+  supportRef       String?
+  lastEventJson    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model DeliveryQuote {
+  id               String    @id @default(cuid())
+  storeId          String
+  provider         String
+  externalId       String    @unique
+  providerFeeCents Int
+  customerFeeCents Int
+  pickupEta        DateTime?
+  dropoffEta       DateTime?
+  expiresAt        DateTime
+  addressJson      String
+  createdAt        DateTime  @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sender    String // customer | driver | store | system
+  body      String
+  via       String   @default("app") // app | sms
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model PromoCode {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  description      String
+  type             String // percent | fixed | free_delivery
+  value            Int // percent (20 = 20%) or cents
+  minSubtotalCents Int       @default(0)
+  channel          String // Instagram | TikTok | Facebook | Flyer | Email | Radio | Google | Referral | In-App
+  campaign         String?
+  isActive         Boolean   @default(true)
+  isPublic         Boolean   @default(false) // listed in the app's Deals tab
+  firstOrderOnly   Boolean   @default(false)
+  maxUses          Int?
+  startsAt         DateTime?
+  endsAt           DateTime?
+  createdAt        DateTime  @default(now())
+}
+
+model DailyReport {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  date        String // YYYY-MM-DD in the store's timezone
+  fileName    String
+  summaryJson String
+  emailedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([storeId, date])
+}
+
+model Counter {
+  id    String @id
+  value Int
+}
+
+// Owner-editable settings stored as JSON (e.g. "pizzaOptions": sizes, crusts, sauces, cheeses, toppings).
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
