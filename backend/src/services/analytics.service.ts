@@ -3,7 +3,7 @@ import { prisma } from '../db.js';
 import { addDays, daysBetween, localDate, localHour, startOfLocalDay } from '../lib/time.js';
 import { ACTIVE_ORDER_STATUSES } from './order-core.js';
 
-export const PAID = ['paid', 'pay_at_pickup'];
+export const PAID = ['paid', 'pay_at_pickup', 'pay_on_delivery'];
 
 /** Net sales = food + delivery fees − discounts. Tax and driver tips are pass-through money. */
 export const netSales = (o: Pick<Order, 'totalCents' | 'taxCents' | 'tipCents'>) => o.totalCents - o.taxCents - o.tipCents;

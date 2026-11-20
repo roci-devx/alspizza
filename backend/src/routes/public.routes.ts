@@ -9,6 +9,7 @@ import { formatAddress, type DeliveryAddress } from '../integrations/delivery/ty
 import { UPSELL } from '../menu/catalog.js';
 import { getPizzaOptions } from '../menu/options.js';
 import { quoteDelivery } from '../services/delivery.service.js';
+import { cashOnDeliveryAvailable } from '../services/drivers.service.js';
 import { pickupEtaMinutes } from '../services/eta.service.js';
 import { reverseGeocode, searchAddress } from '../services/geocode.service.js';
 import { customerKeyFor, priceCart } from '../services/orders.service.js';
@@ -33,7 +34,7 @@ publicRoutes.get('/config', (_req, res) => {
     demo: { payments: config.demo.payments, delivery: config.demo.simulateDelivery && !integrations.doordash && !integrations.uber },
     features: { googleMaps: integrations.googleMaps, driverChatRelay: integrations.twilio },
     demoAccounts: config.demo.accounts
-      ? { customer: { email: DEMO_ACCOUNTS.customer.email, password: DEMO_ACCOUNTS.customer.password }, owner: { email: DEMO_ACCOUNTS.owner.email, password: DEMO_ACCOUNTS.owner.password } }
+      ? Object.fromEntries(Object.entries(DEMO_ACCOUNTS).map(([role, a]) => [role, { email: a.email, password: a.password }]))
       : null,
   });
 });
@@ -114,7 +115,9 @@ publicRoutes.get('/stores', async (req, res) => {
   const q = z.object({ lat: z.coerce.number().optional(), lng: z.coerce.number().optional() }).parse(req.query);
   const near = q.lat != null && q.lng != null ? { lat: q.lat, lng: q.lng } : null;
   const stores = await prisma.store.findMany();
-  const list = await Promise.all(stores.map(async (s) => ({ ...serializeStore(s, near), pickupEtaMinutes: await pickupEtaMinutes(s, []) })));
+  const list = await Promise.all(
+    stores.map(async (s) => ({ ...serializeStore(s, near), pickupEtaMinutes: await pickupEtaMinutes(s, []), cashOnDelivery: await cashOnDeliveryAvailable(s) })),
+  );
   list.sort((a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0) || a.name.localeCompare(b.name));
   res.json({ stores: list });
 });
@@ -122,7 +125,7 @@ publicRoutes.get('/stores', async (req, res) => {
 publicRoutes.get('/stores/:id', async (req, res) => {
   const store = await prisma.store.findUnique({ where: { id: req.params.id } });
   if (!store) throw notFound('Store not found');
-  res.json({ store: { ...serializeStore(store), pickupEtaMinutes: await pickupEtaMinutes(store, []) } });
+  res.json({ store: { ...serializeStore(store), pickupEtaMinutes: await pickupEtaMinutes(store, []), cashOnDelivery: await cashOnDeliveryAvailable(store) } });
 });
 
 publicRoutes.get('/menu', async (_req, res) => {

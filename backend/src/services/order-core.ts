@@ -19,6 +19,8 @@ export async function publishOrder(id: string, extraEvent?: string) {
   const ownerView = serializeOrder(order, 'owner');
   publish(`store:${order.storeId}`, 'order.updated', ownerView);
   if (extraEvent) publish(`store:${order.storeId}`, extraEvent, ownerView);
+  // The driver who has this order refreshes their queue (e.g. the kitchen just marked it ready).
+  if (order.delivery?.driverId) publish(`driver:${order.delivery.driverId}`, 'driver.queue', { orderId: id });
 }
 
 const TIMESTAMPS: Record<string, keyof Prisma.OrderUpdateInput> = {

@@ -110,6 +110,7 @@ class StoreInfo {
     this.distanceMiles,
     this.deliversToYou,
     this.pickupEtaMinutes,
+    this.cashOnDelivery = false,
   });
 
   final String id;
@@ -128,6 +129,9 @@ class StoreInfo {
   final double? distanceMiles;
   final bool? deliversToYou;
   final int? pickupEtaMinutes;
+
+  /// A driver who takes cash is on the clock right now (checkout re-checks before showing it).
+  final bool cashOnDelivery;
 
   /// "Lincoln Park" from "Al's Pizza — Lincoln Park".
   String get shortName => name.contains('—') ? name.split('—').last.trim() : name;
@@ -149,6 +153,7 @@ class StoreInfo {
     distanceMiles: _dbl(j['distanceMiles']),
     deliversToYou: j['deliversToYou'] as bool?,
     pickupEtaMinutes: (j['pickupEtaMinutes'] as num?)?.toInt(),
+    cashOnDelivery: j['cashOnDelivery'] as bool? ?? false,
   );
 
   Json toJson() => {
@@ -168,6 +173,7 @@ class StoreInfo {
     'distanceMiles': distanceMiles,
     'deliversToYou': deliversToYou,
     'pickupEtaMinutes': pickupEtaMinutes,
+    'cashOnDelivery': cashOnDelivery,
   };
 }
 

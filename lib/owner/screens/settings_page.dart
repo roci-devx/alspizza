@@ -200,7 +200,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         spacing: 28,
                         runSpacing: 16,
                         children: [
-                          _stepper('Own drivers on duty', 'In Auto mode, deliveries go to your drivers while this is above 0', 'ownDriversOnDuty', 0, 50),
+                          _stepper('Drivers on duty without the app', 'Drivers clocked in on Al’s Driver count automatically', 'ownDriversOnDuty', 0, 50),
                           _money('Delivery fee (courier)', 'flatDeliveryFeeCents'),
                           _money('Delivery fee (own drivers)', 'ownDeliveryFeeCents'),
                           _money('Minimum delivery order', 'minDeliveryCents'),
@@ -222,6 +222,29 @@ class _SettingsPageState extends State<SettingsPage> {
                         divisions: 28,
                         onChanged: (v) => _set('deliveryRadiusMiles', v),
                       ),
+                      const Divider(height: 32),
+                      Text('Your drivers (Al’s Driver app)', style: AlsText.body(15, weight: FontWeight.w900)),
+                      const SizedBox(height: 2),
+                      Text(
+                        'While anyone is clocked in, delivery orders go to your drivers first, oldest order first. Manage drivers in Staff & drivers.',
+                        style: AlsText.body(13, color: AlsColors.muted),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 28,
+                        runSpacing: 16,
+                        children: [
+                          _stepper('Orders on the road at once', 'Default for new drivers (set each driver in Staff)', 'driverMaxActive', 1, 10),
+                          _stepper('Orders waiting in a driver’s queue', 'Default for new drivers (set each driver in Staff)', 'driverMaxBacklog', 0, 20),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _switch(
+                        'When every driver is full, send ready orders to DoorDash / Uber',
+                        'Off = they wait for the next free driver. Cash orders always wait for a driver.',
+                        'overflowToCouriers',
+                      ),
+                      _switch('Cash on delivery', 'Offered at checkout while a driver who takes cash is on the clock', 'cashOnDelivery'),
                     ],
                   ),
                 ),

@@ -6,7 +6,8 @@ import { readToken, type AuthClaims } from '../lib/auth.js';
 /**
  * Tiny pub/sub over WebSockets.
  *   client → {"type":"subscribe","channel":"order:<id>"}   (customer who owns the order, or owner)
- *   client → {"type":"subscribe","channel":"store:<id>"}   (owner dashboard)
+ *   client → {"type":"subscribe","channel":"store:<id>"}   (owner dashboard, that store's kitchen tablet)
+ *   client → {"type":"subscribe","channel":"driver:<id>"}  (that driver's app, or the owner)
  *   server → {"channel":"order:<id>","event":"order.updated","data":{…}}
  */
 
@@ -22,7 +23,12 @@ async function canJoin(claims: AuthClaims | null | undefined, channel: string): 
   if (!claims) return false;
   const [kind, id] = channel.split(':');
   if (!id) return false;
-  if (claims.role === 'owner') return kind === 'order' || kind === 'store';
+  if (claims.role === 'owner') return kind === 'order' || kind === 'store' || kind === 'driver';
+  if (claims.role === 'kitchen' || claims.role === 'driver') {
+    const staff = await prisma.user.findUnique({ where: { id: claims.sub }, select: { storeId: true, isActive: true } });
+    if (!staff?.isActive) return false;
+    return claims.role === 'kitchen' ? kind === 'store' && id === staff.storeId : kind === 'driver' && id === claims.sub;
+  }
   if (kind !== 'order') return false;
   const order = await prisma.order.findUnique({ where: { id }, select: { userId: true } });
   return order?.userId === claims.sub;

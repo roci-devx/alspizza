@@ -31,7 +31,10 @@ enum PayMethod {
   final IconData icon;
 }
 
-List<PayMethod> availableMethods(PaymentSetup setup, {required bool pickup, required bool cashEnabled}) {
+/// "Pay at pickup" for pickup orders, "Cash on delivery" (driver collects) for deliveries.
+String methodLabel(PayMethod m, {required bool pickup}) => m == PayMethod.cash && !pickup ? 'Cash on delivery' : m.label;
+
+List<PayMethod> availableMethods(PaymentSetup setup, {required bool pickup, required bool cashEnabled, bool cashOnDelivery = false}) {
   final ios = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
   final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   final cards = setup.stripe || setup.demo;
@@ -40,7 +43,7 @@ List<PayMethod> availableMethods(PaymentSetup setup, {required bool pickup, requ
     if (cards && (android || kIsWeb)) PayMethod.googlePay,
     if (cards) PayMethod.card,
     if (setup.paypal || setup.demo) PayMethod.paypal,
-    if (pickup && cashEnabled) PayMethod.cash,
+    if ((pickup && cashEnabled) || (!pickup && cashOnDelivery)) PayMethod.cash,
   ];
 }
 

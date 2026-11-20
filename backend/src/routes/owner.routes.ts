@@ -10,6 +10,7 @@ import { POS_OPTIONS } from '../integrations/pos/index.js';
 import { customers, dashboard, PAID } from '../services/analytics.service.js';
 import { listMessages, postMessage } from '../services/chat.service.js';
 import { assignOwnDriver, sendToCourier } from '../services/delivery.service.js';
+import { assignToDriver, runDispatch } from '../services/drivers.service.js';
 import { ACTIVE_ORDER_STATUSES, loadOrder } from '../services/order-core.js';
 import { cancelOrder, retryPos, updateStatusByStore } from '../services/orders.service.js';
 import { describePromo } from '../services/promo.service.js';
@@ -114,9 +115,13 @@ ownerRoutes.post('/owner/orders/:id/cancel', async (req, res) => {
   res.json({ order: order ? serializeOrder(order, 'owner') : null });
 });
 
+/** A driver on the app (driverId) or, for drivers who don't use it, a typed-in name. */
 ownerRoutes.post('/owner/orders/:id/assign-driver', async (req, res) => {
-  const body = z.object({ name: z.string().trim().min(1).max(60), phone: z.string().max(20).optional() }).parse(req.body);
-  await assignOwnDriver(req.params.id, body.name, body.phone);
+  const body = z
+    .union([z.object({ driverId: z.string().min(1) }), z.object({ name: z.string().trim().min(1).max(60), phone: z.string().max(20).optional() })])
+    .parse(req.body);
+  if ('driverId' in body) await assignToDriver(req.params.id, body.driverId);
+  else await assignOwnDriver(req.params.id, body.name, body.phone);
   res.json({ order: serializeOrder((await loadOrder(req.params.id))!, 'owner') });
 });
 
@@ -236,6 +241,10 @@ ownerRoutes.patch('/owner/stores/:id/settings', async (req, res) => {
       flatDeliveryFeeCents: z.number().int().min(0).max(5000),
       deliveryRadiusMiles: z.number().min(0.5).max(25),
       minDeliveryCents: z.number().int().min(0).max(10_000),
+      driverMaxActive: z.number().int().min(1).max(10),
+      driverMaxBacklog: z.number().int().min(0).max(20),
+      overflowToCouriers: z.boolean(),
+      cashOnDelivery: z.boolean(),
       queueMinutesPerOrder: z.number().int().min(0).max(15),
       posProvider: z.enum(['none', 'square', 'clover', 'toast']),
       posLocationId: z.string().trim().max(80).nullable(),
@@ -248,6 +257,7 @@ ownerRoutes.patch('/owner/stores/:id/settings', async (req, res) => {
     .parse(req.body);
   const { hours, ...rest } = body;
   const store = await prisma.store.update({ where: { id: req.params.id }, data: { ...rest, ...(hours ? { hoursJson: JSON.stringify(hours) } : {}) } });
+  if (rest.overflowToCouriers !== undefined) await runDispatch(store.id);
   res.json({ store: { ...store, hours: json.parse(store.hoursJson, {}) } });
 });
 

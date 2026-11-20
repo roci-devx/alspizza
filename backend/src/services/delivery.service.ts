@@ -1,4 +1,4 @@
-import type { Prisma, Store } from '@prisma/client';
+import type { Delivery, Prisma, Store } from '@prisma/client';
 import { config, integrations } from '../config.js';
 import { json, prisma } from '../db.js';
 import { bus, type DeliveryUpdate } from '../lib/bus.js';
@@ -10,6 +10,7 @@ import { runSimulation, simulated } from '../integrations/delivery/simulated.js'
 import { ACTIVE_DELIVERY_STATUSES, type DeliveryAddress, type DeliveryProvider, type ProviderName } from '../integrations/delivery/types.js';
 import { uber } from '../integrations/delivery/uber.js';
 import { publish } from '../realtime/hub.js';
+import { driversOnShiftCount, publishDriverQueue, runDispatch, startDriverDispatchSweep } from './drivers.service.js';
 import { publishOrder, setStatus } from './order-core.js';
 
 const providers: Record<ProviderName, DeliveryProvider> = { doordash, uber, own: ownDrivers, simulated };
@@ -20,9 +21,11 @@ const providers: Record<ProviderName, DeliveryProvider> = { doordash, uber, own:
  *  own      → own drivers only
  *  doordash → DoorDash, Uber as fallback
  *  uber     → Uber, DoorDash as fallback
- * In development a simulated courier stands in for networks without credentials.
+ * "On duty" = drivers clocked in on the driver app, plus the manual count from Settings
+ * (for drivers who don't use the app). In development a simulated courier stands in for
+ * networks without credentials.
  */
-export function providerChain(store: Store, opts: { excludeOwn?: boolean } = {}): DeliveryProvider[] {
+export function providerChain(store: Store, opts: { excludeOwn?: boolean; ownOnDuty?: number } = {}): DeliveryProvider[] {
   const network = (name: 'doordash' | 'uber') => (integrations[name] ? providers[name] : null);
   const sim = config.demo.simulateDelivery ? simulated : null;
   const networks = (first: 'doordash' | 'uber') => [network(first), network(first === 'doordash' ? 'uber' : 'doordash'), sim];
@@ -38,7 +41,7 @@ export function providerChain(store: Store, opts: { excludeOwn?: boolean } = {})
       chain = networks('uber');
       break;
     default:
-      chain = store.ownDriversOnDuty > 0 && !opts.excludeOwn ? [ownDrivers, ...networks('doordash')] : networks('doordash');
+      chain = store.ownDriversOnDuty + (opts.ownOnDuty ?? 0) > 0 && !opts.excludeOwn ? [ownDrivers, ...networks('doordash')] : networks('doordash');
   }
   const seen = new Set<string>();
   return chain.filter((p): p is DeliveryProvider => !!p && !seen.has(p.name) && !!seen.add(p.name));
@@ -60,7 +63,7 @@ export async function quoteDelivery(input: {
       'out_of_range',
     );
   }
-  const chain = providerChain(store);
+  const chain = providerChain(store, { ownOnDuty: await driversOnShiftCount(store.id) });
   if (!chain.length) throw badRequest('Delivery is paused right now. Pickup is open!', 'delivery_unavailable');
 
   for (const provider of chain) {
@@ -106,8 +109,19 @@ export async function dispatchDelivery(orderId: string, opts: { excludeOwn?: boo
   if (!order || order.fulfillment !== 'delivery' || order.delivery) return;
   const dropoff = json.parse<DeliveryAddress | null>(order.addressJson, null);
   if (!dropoff) return;
+
+  // Cash on delivery: only the store's own drivers can collect it.
+  if (order.paymentStatus === 'pay_on_delivery') {
+    await prisma.delivery.create({
+      data: { orderId, provider: 'own', externalId: `OWN-${order.number}-${Date.now().toString(36)}`, status: 'pending_driver', cashDueCents: order.totalCents },
+    });
+    await publishOrder(orderId);
+    await runDispatch(order.storeId);
+    return;
+  }
+
   const quote = order.deliveryQuoteId ? await prisma.deliveryQuote.findUnique({ where: { id: order.deliveryQuoteId } }) : null;
-  const chain = providerChain(order.store, opts);
+  const chain = providerChain(order.store, { ...opts, ownOnDuty: opts.excludeOwn ? 0 : await driversOnShiftCount(order.storeId) });
   const ordered = quote ? [...chain.filter((p) => p.name === quote.provider), ...chain.filter((p) => p.name !== quote.provider)] : chain;
 
   for (const provider of ordered) {
@@ -143,6 +157,7 @@ export async function dispatchDelivery(orderId: string, opts: { excludeOwn?: boo
       const eta = res.dropoffEta ?? quote?.dropoffEta;
       if (eta) await prisma.order.update({ where: { id: orderId }, data: { estimatedDeliveryAt: eta } });
       await publishOrder(orderId);
+      if (provider.name === 'own') await runDispatch(order.storeId); // hand it to a driver on the clock
       return;
     } catch (err) {
       console.error(`[delivery] ${provider.name} dispatch failed for #${order.number}`, err);
@@ -164,17 +179,33 @@ export async function sendToCourier(orderId: string) {
   await dispatchDelivery(orderId, { excludeOwn: true });
 }
 
-/** Hands a delivery to one of the store's own drivers — taking it back from DoorDash/Uber if needed. */
+/** Takes a delivery back from DoorDash/Uber (before their courier has the food). */
+export async function cancelCourier(delivery: Delivery) {
+  if (delivery.provider === 'own' || !ACTIVE_DELIVERY_STATUSES.includes(delivery.status)) return;
+  if (['picked_up', 'enroute_to_dropoff', 'arrived_at_dropoff'].includes(delivery.status)) throw badRequest('The courier already has this order');
+  await providers[delivery.provider as ProviderName]?.cancel(delivery.externalId).catch((err) => console.error('[delivery] courier cancel failed', err));
+}
+
+/** Hands a delivery to a driver who isn't on the app (typed-in name) — taking it back from DoorDash/Uber if needed. */
 export async function assignOwnDriver(orderId: string, driverName: string, driverPhone?: string) {
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { delivery: true } });
   if (!order) throw notFound('Order not found');
   if (order.fulfillment !== 'delivery') throw badRequest('Pickup orders don’t need a driver');
   const delivery = order.delivery;
-  if (delivery && delivery.provider !== 'own' && ACTIVE_DELIVERY_STATUSES.includes(delivery.status)) {
-    if (['picked_up', 'enroute_to_dropoff', 'arrived_at_dropoff'].includes(delivery.status)) throw badRequest('The courier already has this order');
-    await providers[delivery.provider as ProviderName]?.cancel(delivery.externalId).catch((err) => console.error('[delivery] courier cancel failed', err));
-  }
-  const data = { provider: 'own', status: 'confirmed', driverName, driverPhone: driverPhone ?? null, driverLat: null, driverLng: null, providerFeeCents: 0 };
+  if (delivery) await cancelCourier(delivery);
+  const previousDriver = delivery?.provider === 'own' ? delivery.driverId : null;
+  const data = {
+    provider: 'own',
+    status: 'confirmed',
+    driverName,
+    driverPhone: driverPhone ?? null,
+    driverLat: null,
+    driverLng: null,
+    providerFeeCents: 0,
+    driverId: null,
+    shiftId: null,
+  };
+  if (previousDriver) publishDriverQueue(previousDriver, order.storeId);
   if (delivery) await prisma.delivery.update({ where: { id: delivery.id }, data });
   else await prisma.delivery.create({ data: { ...data, orderId, externalId: `OWN-${order.number}-${Date.now().toString(36)}` } });
   await publishOrder(orderId);
@@ -182,14 +213,28 @@ export async function assignOwnDriver(orderId: string, driverName: string, drive
 
 /** Keeps in-house delivery status in step with the order status the kitchen sets. */
 export async function syncOwnDelivery(orderId: string, orderStatus: string) {
-  const delivery = await prisma.delivery.findUnique({ where: { orderId } });
+  const delivery = await prisma.delivery.findUnique({ where: { orderId }, include: { order: { select: { storeId: true } } } });
   if (!delivery || delivery.provider !== 'own') return;
   const status = orderStatus === 'out_for_delivery' ? 'enroute_to_dropoff' : orderStatus === 'completed' ? 'delivered' : null;
-  if (status) await prisma.delivery.update({ where: { id: delivery.id }, data: { status } });
+  if (!status || status === delivery.status) return;
+  const now = new Date();
+  await prisma.delivery.update({
+    where: { id: delivery.id },
+    data: { status, ...(status === 'delivered' ? { deliveredAt: now } : { pickedUpAt: delivery.pickedUpAt ?? now }) },
+  });
+  // Marked delivered from the board: the driver still collected the cash, so it counts toward their shift.
+  if (status === 'delivered' && delivery.cashDueCents > 0) {
+    if (delivery.shiftId) await prisma.shift.update({ where: { id: delivery.shiftId }, data: { cashCollectedCents: { increment: delivery.cashDueCents } } });
+    await prisma.order.update({ where: { id: orderId }, data: { paymentStatus: 'paid', paymentMethod: 'Cash on delivery' } });
+  }
+  if (delivery.driverId) {
+    publishDriverQueue(delivery.driverId, delivery.order.storeId);
+    void runDispatch(delivery.order.storeId);
+  }
 }
 
 export async function cancelDelivery(orderId: string) {
-  const delivery = await prisma.delivery.findUnique({ where: { orderId } });
+  const delivery = await prisma.delivery.findUnique({ where: { orderId }, include: { order: { select: { storeId: true } } } });
   if (!delivery || !ACTIVE_DELIVERY_STATUSES.includes(delivery.status)) return;
   try {
     await providers[delivery.provider as ProviderName]?.cancel(delivery.externalId);
@@ -197,6 +242,11 @@ export async function cancelDelivery(orderId: string) {
     console.error('[delivery] cancel failed', err);
   }
   await prisma.delivery.update({ where: { id: delivery.id }, data: { status: 'cancelled' } });
+  // Frees the slot in that driver's queue/run.
+  if (delivery.provider === 'own' && delivery.driverId) {
+    publishDriverQueue(delivery.driverId, delivery.order.storeId);
+    void runDispatch(delivery.order.storeId);
+  }
 }
 
 const RANK = ['quote', 'created', 'pending_driver', 'confirmed', 'enroute_to_pickup', 'arrived_at_pickup', 'picked_up', 'enroute_to_dropoff', 'arrived_at_dropoff', 'delivered'];
@@ -251,6 +301,7 @@ bus.on('delivery.update', (u) => {
 
 /** DoorDash sends webhooks on status changes; GPS between them comes from polling. */
 export function startDeliveryWorkers() {
+  startDriverDispatchSweep();
   if (integrations.doordash) {
     setInterval(async () => {
       const active = await prisma.delivery.findMany({ where: { provider: 'doordash', status: { in: ACTIVE_DELIVERY_STATUSES } }, take: 50 });

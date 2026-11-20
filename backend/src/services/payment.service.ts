@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { badRequest } from '../lib/http.js';
 import { capturePaypalOrder, createPaypalOrder } from '../integrations/payments/paypal.js';
 import { createCheckoutSession, createPaymentIntent, describeCharge, retrieveIntent, retrieveSession } from '../integrations/payments/stripe.js';
+import { cashOnDeliveryAvailable } from './drivers.service.js';
 import { loadOrder } from './order-core.js';
 import { markPaid } from './orders.service.js';
 
@@ -37,7 +38,12 @@ export async function startPayment(order: Order, provider: PayProvider, method: 
   switch (provider) {
     case 'cash': {
       const store = await prisma.store.findUniqueOrThrow({ where: { id: order.storeId } });
-      if (order.fulfillment !== 'pickup' || !store.cashEnabled) throw badRequest('Pay at pickup is not available for this order');
+      if (order.fulfillment === 'delivery') {
+        if (!(await cashOnDeliveryAvailable(store))) throw badRequest('Cash on delivery isn’t available right now — please pay by card', 'cod_unavailable');
+        await markPaid(order.id, { provider: 'cash', method: 'Cash on delivery', status: 'pay_on_delivery' });
+        return { status: 'confirmed' as const };
+      }
+      if (!store.cashEnabled) throw badRequest('Pay at pickup is not available for this order');
       await markPaid(order.id, { provider: 'cash', method: 'Pay at pickup', status: 'pay_at_pickup' });
       return { status: 'confirmed' as const };
     }

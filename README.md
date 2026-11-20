@@ -64,6 +64,8 @@ flutter build web -t lib/main_owner.dart -o build/owner_web
 flutter build apk --release --dart-define=API_URL=https://api.yourdomain.com
 flutter build ipa --release --dart-define=API_URL=https://api.yourdomain.com   # on a Mac
 cd owner_app && flutter build apk --release --dart-define=API_URL=https://api.yourdomain.com   # owner app
+cd kitchen_app && flutter build apk --release --dart-define=API_URL=https://api.yourdomain.com # kitchen tablet
+cd driver_app && flutter build apk --release --dart-define=API_URL=https://api.yourdomain.com  # drivers
 ```
 
 `API_URL` defaults to `localhost:4000` (web uses the page's host, the Android emulator uses `10.0.2.2`).
@@ -144,7 +146,18 @@ Same screens everywhere: a sidebar on desktop, bottom tabs (Dashboard · Orders 
 - **Menu portal** — add/edit/delete items; upload a photo (camera or library) or paste a link; edit ingredients (default toppings, sauce, cheese, crust), prices per size or custom size options ("6 pc / 12 pc"), choice groups (wing sauce, free dip…), combo contents, tags, calories, prep time, sold-out; create, rename, reorder and delete **menu types**; edit the shared **pizza options** (sizes, crusts per size with upcharges, sauces, cheese levels, toppings — new toppings pick a "looks like" drawing for the live pizza preview).
 - **Dashboard** — net sales (hero), orders, average order, app users, repeat-customer rate, orders in the kitchen, with deltas vs the previous period; sales trend, orders by hour, pickup/delivery split, courier split, platform split, top sellers, **which marketing worked** (promo codes are tagged with a channel), promo performance, payment methods, sign-up sources. Every chart has a table view.
 - **Live orders** — kanban board that updates in real time; start/ready/complete, assign drivers, send to courier, cancel & refund, read the customer↔driver chat.
+- **Staff & drivers** — kitchen-tablet and driver logins (email or phone + password), per-driver limits, who's on the clock and how full they are, and cash to settle.
 - **Menu & prep times**, **Promo codes**, **Customers** (repeat customers matched by phone), **Reports**, **Settings**.
+
+### Kitchen tablet & drivers (Al's Kitchen, Al's Driver)
+
+Two more native shells around the same package: `kitchen_app/` (`lib/main_kitchen.dart`) and `driver_app/` (`lib/main_driver.dart`). Both also run on the web (`flutter run -d chrome -t lib/main_kitchen.dart`). The owner creates the logins in **Staff & drivers**; on test servers the sign-in screens offer one-tap demo accounts.
+
+- **Al's Kitchen** — a board for the kitchen tablet: New → In the oven → Ready. A new order rings until someone taps it; the ticket shows every item and option, can be printed (system print dialog — 80 mm receipt printers, AirPrint, browser), and **Done** marks it ready. Pickup orders get **Picked up**; delivery orders are finished by the driver. The screen stays awake.
+- **Al's Driver** — clock in/out, the queue (oldest first) and what's on the road, Navigate (Google Maps), call/text the customer, **Delivered**, and "couldn't deliver" alerts to the store. Location is shared only while on the clock and shows on the customer's tracking map.
+- **Dispatch rules** (`backend/src/services/drivers.service.ts`): while any driver is on the clock, delivery orders go to own drivers first. Each driver has a queue limit (default 6) and an on-the-road limit (default 4), set per driver. Strictly first in, first out: orders are assigned and leave oldest first, and the next order goes to the driver with the shortest queue (ties → the one who has waited longest). If everyone is full, the order waits; once its food is ready it goes to DoorDash/Uber if **Settings → Delivery** allows overflow (cash orders always wait).
+- **Cash on delivery** (Settings → Delivery) is offered at checkout only while a driver who opted in to cash is on the clock with room. The cash a driver collects adds up on their shift, and they can't clock in again until the owner marks it settled in Staff & drivers.
+- Apps refresh over WebSockets while open. Ringing a phone whose app is closed needs push notifications (Firebase) — not set up yet.
 
 ### End-of-day Excel report
 

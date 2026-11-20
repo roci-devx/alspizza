@@ -92,6 +92,8 @@ async function main() {
     prisma.deliveryQuote.deleteMany(),
     prisma.dailyReport.deleteMany(),
     prisma.address.deleteMany(),
+    prisma.shift.deleteMany(),
+    prisma.driverProfile.deleteMany(),
     prisma.user.deleteMany(),
     prisma.menuItem.deleteMany(),
     prisma.category.deleteMany(),
@@ -132,10 +134,41 @@ async function main() {
           timezone: 'America/Chicago',
           hoursJson: JSON.stringify(HOURS),
           ownDriversOnDuty: s.ownDrivers,
+          cashOnDelivery: true,
           reportEmail: 'owner@alspizza.com',
         },
       }),
     );
+  }
+
+  // Kitchen tablets and drivers (Al's Kitchen / Al's Driver). Lincoln Park has the one-tap demo logins;
+  // the others get random passwords the owner can reset from Staff.
+  const staffHash = await bcrypt.hash(crypto.randomBytes(12).toString('base64url'), 10);
+  const STAFF = [
+    { store: 0, role: 'kitchen', name: DEMO_ACCOUNTS.kitchen.name, email: DEMO_ACCOUNTS.kitchen.email, password: DEMO_ACCOUNTS.kitchen.password },
+    { store: 0, role: 'driver', name: DEMO_ACCOUNTS.driver.name, email: DEMO_ACCOUNTS.driver.email, password: DEMO_ACCOUNTS.driver.password, phone: '+13125550161', cash: true, vehicle: 'Silver Honda Civic' },
+    { store: 0, role: 'driver', name: 'Priya K.', phone: '+13125550162', cash: false, vehicle: 'Blue Toyota Prius' },
+    { store: 1, role: 'kitchen', name: 'Wicker Park Kitchen', email: 'kitchen.wicker@alspizza.com' },
+    { store: 1, role: 'driver', name: 'Diego R.', phone: '+13125550163', cash: true, vehicle: 'Red Kia Soul' },
+    { store: 2, role: 'kitchen', name: 'South Loop Kitchen', email: 'kitchen.southloop@alspizza.com' },
+    { store: 2, role: 'driver', name: 'Hannah L.', phone: '+13125550164', cash: false, vehicle: 'White Ford Focus' },
+  ] as const;
+  for (const s of STAFF) {
+    const store = stores[s.store]!;
+    await prisma.user.create({
+      data: {
+        role: s.role,
+        name: s.name,
+        email: 'email' in s ? s.email : null,
+        phone: 'phone' in s ? s.phone : null,
+        passwordHash: 'password' in s ? await bcrypt.hash(s.password, 10) : staffHash,
+        storeId: store.id,
+        createdAt: new Date('2025-01-01'),
+        ...(s.role === 'driver'
+          ? { driver: { create: { maxActive: store.driverMaxActive, maxBacklog: store.driverMaxBacklog, cashEnabled: s.cash, vehicle: s.vehicle } } }
+          : {}),
+      },
+    });
   }
   for (const [ci, c] of CATALOG.entries()) {
     await prisma.category.create({
@@ -426,6 +459,8 @@ async function main() {
   console.log(`   Owner dashboard login:  owner@alspizza.com / ${process.env.OWNER_PASSWORD?.trim() ? '(OWNER_PASSWORD from .env)' : ownerPassword}`);
   console.log(`   Demo owner login:       ${DEMO_ACCOUNTS.owner.email} / ${DEMO_ACCOUNTS.owner.password}`);
   console.log(`   Demo customer login:    ${DEMO_ACCOUNTS.customer.email} / ${DEMO_ACCOUNTS.customer.password}`);
+  console.log(`   Demo kitchen tablet:    ${DEMO_ACCOUNTS.kitchen.email} / ${DEMO_ACCOUNTS.kitchen.password}`);
+  console.log(`   Demo driver:            ${DEMO_ACCOUNTS.driver.email} / ${DEMO_ACCOUNTS.driver.password}`);
 }
 
 function addDaysDate(d: Date, days: number) {

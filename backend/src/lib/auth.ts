@@ -3,7 +3,8 @@ import { config } from '../config.js';
 import { forbidden, unauthorized } from './http.js';
 import { signJwt, verifyJwt } from './jwt.js';
 
-export type Role = 'customer' | 'owner';
+export type Role = 'customer' | 'owner' | 'kitchen' | 'driver';
+export const STAFF_ROLES: readonly Role[] = ['owner', 'kitchen', 'driver'];
 
 export interface AuthClaims {
   sub: string;
@@ -70,3 +71,14 @@ export const requireOwner: RequestHandler = (req, _res, next) => {
   req.auth = claims;
   next();
 };
+
+/** Any of the given roles (kitchen tablets, driver app, owner). Route handlers re-check `isActive`. */
+export const requireRole =
+  (...roles: Role[]): RequestHandler =>
+  (req, _res, next) => {
+    const claims = readToken(bearer(req.headers.authorization));
+    if (!claims || claims.purpose === 'download') return next(unauthorized());
+    if (!roles.includes(claims.role)) return next(forbidden('This account can’t open this screen'));
+    req.auth = claims;
+    next();
+  };

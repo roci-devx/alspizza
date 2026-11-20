@@ -39,6 +39,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _triedSubmit = false;
   String? _error;
 
+  /// Live check: cash on delivery depends on which drivers are clocked in right now.
+  bool? _cod;
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +55,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.cancelledOrderId != null) showToast(context, 'Payment cancelled — your order is still here.', icon: Icons.info_outline_rounded);
       _refresh(requote: true);
+      _checkCashOnDelivery();
     });
+  }
+
+  Future<void> _checkCashOnDelivery() async {
+    final store = context.read<OrderingStore>().store;
+    if (store == null) return;
+    try {
+      final res = await context.read<SessionStore>().api.get('/stores/${store.id}');
+      final cod = (res['store'] as Json?)?['cashOnDelivery'] as bool? ?? false;
+      if (mounted) setState(() => _cod = cod);
+    } catch (_) {
+      // Keep whatever the store list said; the server double-checks at payment.
+    }
   }
 
   @override
@@ -164,7 +180,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final store = ordering.store;
     final q = cart.priced;
     final delivery = ordering.isDelivery;
-    final methods = availableMethods(payments, pickup: !delivery, cashEnabled: store?.cashEnabled ?? false);
+    final methods = availableMethods(
+      payments,
+      pickup: !delivery,
+      cashEnabled: store?.cashEnabled ?? false,
+      cashOnDelivery: _cod ?? store?.cashOnDelivery ?? false,
+    );
     if (_method != null && !methods.contains(_method)) _method = null;
 
     return Scaffold(
@@ -219,7 +240,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   for (final m in methods)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: _MethodTile(method: m, selected: _method == m, onTap: () => setState(() => _method = m)),
+                      child: _MethodTile(
+                        method: m,
+                        label: methodLabel(m, pickup: !delivery),
+                        selected: _method == m,
+                        onTap: () => setState(() => _method = m),
+                      ),
                     ),
                 ],
               ),
@@ -523,9 +549,10 @@ class _EtaCard extends StatelessWidget {
 }
 
 class _MethodTile extends StatelessWidget {
-  const _MethodTile({required this.method, required this.selected, required this.onTap});
+  const _MethodTile({required this.method, required this.selected, required this.onTap, this.label});
 
   final PayMethod method;
+  final String? label;
   final bool selected;
   final VoidCallback onTap;
 
@@ -547,7 +574,7 @@ class _MethodTile extends StatelessWidget {
           Icon(method.icon, color: AlsColors.brown, size: 26),
           const SizedBox(width: 14),
           Expanded(
-            child: Text(method.label, style: AlsText.body(16, weight: FontWeight.w800)),
+            child: Text(label ?? method.label, style: AlsText.body(16, weight: FontWeight.w800)),
           ),
           AnimatedContainer(
             duration: const Duration(milliseconds: 220),

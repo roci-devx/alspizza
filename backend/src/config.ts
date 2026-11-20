@@ -96,6 +96,9 @@ export const config = {
 export const DEMO_ACCOUNTS = {
   customer: { email: 'demo@alspizza.com', password: 'pizza1234', name: 'Jordan Rivera' },
   owner: { email: 'demo.owner@alspizza.com', password: 'demo1234', name: 'Demo Owner' },
+  // Lincoln Park staff, for trying the kitchen tablet and driver app.
+  kitchen: { email: 'demo.kitchen@alspizza.com', password: 'kitchen1234', name: 'Lincoln Park Kitchen' },
+  driver: { email: 'demo.driver@alspizza.com', password: 'driver1234', name: 'Marcus T.' },
 };
 
 export const integrations = {

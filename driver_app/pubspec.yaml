@@ -1,0 +1,43 @@
+name: als_driver
+description: "Al's Driver — the in-house drivers' app as a native Android & iOS app (screens live in package:als/driver)."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  als:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
+
+flutter:
+  uses-material-design: true
+  # package:als loads these from the app bundle (same files as the main app).
+  assets:
+    - assets/images/
+    - assets/sounds/
+
+# dart run flutter_launcher_icons && dart run flutter_native_splash:create
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/driver_icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#356726"
+  adaptive_icon_foreground: "assets/icon/driver_icon_foreground.png"
+
+flutter_native_splash:
+  color: "#356726"
+  image: assets/icon/driver_splash.png
+  android_12:
+    color: "#356726"
+    image: assets/icon/driver_splash.png

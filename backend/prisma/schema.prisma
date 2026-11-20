@@ -18,14 +18,53 @@ model User {
   phone           String?
   name            String?
   passwordHash    String?
-  role            String    @default("customer") // customer | owner
+  role            String    @default("customer") // customer | owner | kitchen | driver
   isGuest         Boolean   @default(false)
   marketingSource String? // "How did you hear about us?" answer at signup
   platform        String? // ios | android | web — where we first saw them
+  // Staff (kitchen/driver): the store they work at; the owner can switch an account off.
+  storeId         String?
+  isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   lastSeenAt      DateTime  @default(now())
   addresses       Address[]
   orders          Order[]
+  driver          DriverProfile?
+  shifts          Shift[]
+  deliveries      Delivery[] @relation("DriverDeliveries")
+}
+
+/// One per driver account. Limits are set by the owner (defaults come from the store).
+model DriverProfile {
+  userId         String    @id
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  maxActive      Int       @default(4) // orders on the road at once (one run)
+  maxBacklog     Int       @default(6) // orders waiting in this driver's queue
+  cashEnabled    Boolean   @default(false) // opted in to cash-on-delivery orders
+  vehicle        String?
+  lastLat        Float?
+  lastLng        Float?
+  lastSeenAt     DateTime?
+  availableSince DateTime? // back at the store with nothing on the road — longest-waiting driver goes first
+}
+
+/// A driver's time on the clock. Cash collected must be settled with the owner before the next shift.
+model Shift {
+  id                 String     @id @default(cuid())
+  driverId           String
+  driver             User       @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  storeId            String
+  startedAt          DateTime   @default(now())
+  endedAt            DateTime?
+  cashCollectedCents Int        @default(0)
+  cashSettledCents   Int?
+  settledAt          DateTime?
+  settledBy          String?
+  note               String?
+  deliveries         Delivery[]
+
+  @@index([driverId, startedAt])
+  @@index([storeId, endedAt])
 }
 
 model Address {
@@ -69,6 +108,11 @@ model Store {
   flatDeliveryFeeCents Int           @default(399)
   deliveryRadiusMiles  Float         @default(6)
   minDeliveryCents     Int           @default(1200)
+  // Own drivers (the driver app)
+  driverMaxActive      Int           @default(4) // default for new drivers: orders on the road at once
+  driverMaxBacklog     Int           @default(6) // default for new drivers: orders waiting in their queue
+  overflowToCouriers   Boolean       @default(true) // all drivers full → hand the order to DoorDash/Uber
+  cashOnDelivery       Boolean       @default(false) // drivers who opted in can collect cash at the door
   // Kitchen
   queueMinutesPerOrder Int           @default(2)
   // POS
@@ -199,8 +243,20 @@ model Delivery {
   dropoffEta       DateTime?
   supportRef       String?
   lastEventJson    String?
+  // Own drivers (driver app): queue → picked up → delivered, first in first out
+  driverId         String?
+  driver           User?     @relation("DriverDeliveries", fields: [driverId], references: [id])
+  shiftId          String?
+  shift            Shift?    @relation(fields: [shiftId], references: [id])
+  assignedAt       DateTime?
+  pickedUpAt       DateTime?
+  deliveredAt      DateTime?
+  cashDueCents     Int       @default(0) // cash-on-delivery amount the driver collects
+  problem          String? // driver reported they couldn't deliver
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
+  @@index([driverId, status])
 }
 
 model DeliveryQuote {

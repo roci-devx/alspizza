@@ -238,6 +238,10 @@ class _OrderCard extends StatelessWidget {
     final d = order.delivery;
     final own = d?.provider == 'own';
     final needsDriver = order.isDelivery && (d == null || d.status == 'pending_driver');
+    final rawDelivery = order.raw['delivery'] as Json?;
+    final appDriver = own && rawDelivery?['driverId'] != null; // a driver on the Al's Driver app
+    final problem = rawDelivery?['problem'] as String?;
+    final onTheRoad = d != null && const ['enroute_to_dropoff', 'arrived_at_dropoff', 'picked_up'].contains(d.status);
     final (label, next) = switch (order.status) {
       'received' => ('Start making', 'preparing'),
       'preparing' => ('Mark ready', 'ready'),
@@ -306,6 +310,8 @@ class _OrderCard extends StatelessWidget {
             children: [
               Badge2(money(order.totalCents), color: AlsColors.ink),
               if (order.paymentStatus == 'pay_at_pickup') const Badge2('COLLECT PAYMENT', color: AlsColors.red, filled: true),
+              if (order.paymentStatus == 'pay_on_delivery') const Badge2('CASH ON DELIVERY', color: AlsColors.red, filled: true),
+              if (problem != null) Badge2('Driver: $problem', color: AlsColors.red, icon: Icons.report_problem_rounded),
               if (order.promoCode != null) Badge2(order.promoCode!, color: AlsColors.basil),
               if (order.estimatedReadyAt != null && order.isActive)
                 Badge2('Ready by ${clock(order.estimatedReadyAt!)}', color: late ? AlsColors.red : AlsColors.brownSoft),
@@ -332,7 +338,11 @@ class _OrderCard extends StatelessWidget {
                           needsDriver ? 'Needs a driver' : '${providerLabel(d!.provider)} · ${d.driverName ?? 'assigning…'}',
                           style: AlsText.body(12, color: needsDriver ? AlsColors.red : AlsColors.ink, weight: FontWeight.w900),
                         ),
-                        if (d != null) Text(d.status.replaceAll('_', ' '), style: AlsText.body(11, color: AlsColors.muted)),
+                        if (d != null)
+                          Text(
+                            appDriver ? (onTheRoad ? 'on the road' : 'in their queue') : d.status.replaceAll('_', ' '),
+                            style: AlsText.body(11, color: AlsColors.muted),
+                          ),
                       ],
                     ),
                   ),
@@ -373,7 +383,8 @@ class _OrderCard extends StatelessWidget {
                 },
                 itemBuilder: (_) => [
                   const PopupMenuItem(value: 'details', child: Text('Details & messages')),
-                  if (needsDriver || own) const PopupMenuItem(value: 'courier', child: Text('Send to DoorDash / Uber')),
+                  if (own && !needsDriver && !onTheRoad && order.isActive) const PopupMenuItem(value: 'own', child: Text('Move to another driver')),
+                  if ((needsDriver || own) && order.paymentStatus != 'pay_on_delivery') const PopupMenuItem(value: 'courier', child: Text('Send to DoorDash / Uber')),
                   if (order.isDelivery && !own && !needsDriver && order.status != 'out_for_delivery')
                     const PopupMenuItem(value: 'own', child: Text('Use one of our drivers instead')),
                   if (order.posError != null) const PopupMenuItem(value: 'pos', child: Text('Retry sending to POS')),
@@ -387,39 +398,13 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
+  /// Pick a driver who's clocked in on Al's Driver, or type in someone who isn't on the app.
   Future<void> _assign(BuildContext context) async {
-    final name = TextEditingController();
-    final phone = TextEditingController();
-    final ok = await showDialog<bool>(
+    final body = await showDialog<Json>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Assign one of your drivers', style: AlsText.display(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: name,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: 'Driver name'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: phone,
-              decoration: const InputDecoration(hintText: 'Driver phone (optional)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Assign')),
-        ],
-      ),
+      builder: (_) => _AssignDriverDialog(api: context.read<OwnerStore>().api, order: order),
     );
-    if (ok == true && name.text.trim().isNotEmpty) {
-      await onAct(
-        (api) => api.post('/owner/orders/${order.id}/assign-driver', {'name': name.text.trim(), if (phone.text.trim().isNotEmpty) 'phone': phone.text.trim()}),
-      );
-    }
+    if (body != null) await onAct((api) => api.post('/owner/orders/${order.id}/assign-driver', body));
   }
 
   Future<bool> _confirmCancel(BuildContext context) async =>
@@ -636,4 +621,113 @@ class _DoneColumn extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// Drivers clocked in on Al's Driver (with how full they are), plus a typed-in option for
+/// drivers who don't use the app. Pops the request body for /assign-driver.
+class _AssignDriverDialog extends StatefulWidget {
+  const _AssignDriverDialog({required this.api, required this.order});
+
+  final ApiClient api;
+  final Order order;
+
+  @override
+  State<_AssignDriverDialog> createState() => _AssignDriverDialogState();
+}
+
+class _AssignDriverDialogState extends State<_AssignDriverDialog> {
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  List<Json>? _drivers;
+  String? _error;
+
+  bool get _cashOrder => widget.order.paymentStatus == 'pay_on_delivery';
+
+  @override
+  void initState() {
+    super.initState();
+    widget.api
+        .get('/owner/drivers', query: {'storeId': widget.order.storeId})
+        .then((res) {
+          if (mounted) setState(() => _drivers = ((res['drivers'] as List?) ?? const []).cast<Json>());
+        })
+        .catchError((Object e) {
+          if (mounted) setState(() => _error = e.toString());
+        });
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = (widget.order.raw['delivery'] as Json?)?['driverId'];
+    final drivers = _drivers;
+    return AlertDialog(
+      title: Text('Who takes #${widget.order.number}?', style: AlsText.display(20)),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('On the clock (Al’s Driver)', style: AlsText.body(13, color: AlsColors.muted, weight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              if (_error != null)
+                Text(_error!, style: AlsText.body(13, color: AlsColors.red))
+              else if (drivers == null)
+                const Padding(padding: EdgeInsets.all(12), child: Center(child: CircularProgressIndicator(color: AlsColors.orange)))
+              else if (drivers.isEmpty)
+                Text('Nobody is clocked in on the driver app right now.', style: AlsText.body(14))
+              else
+                for (final d in drivers)
+                  Builder(
+                    builder: (context) {
+                      final queue = (d['queue'] as List?)?.length ?? 0;
+                      final road = (d['run'] as List?)?.length ?? 0;
+                      final cashOk = !_cashOrder || d['cashEnabled'] == true;
+                      final isCurrent = d['driverId'] == current;
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        enabled: cashOk && !isCurrent,
+                        leading: CircleAvatar(
+                          backgroundColor: d['atStore'] == true ? AlsColors.success : AlsColors.orange,
+                          child: const Icon(Icons.delivery_dining_rounded, color: Colors.white, size: 20),
+                        ),
+                        title: Text('${d['name'] ?? 'Driver'}${isCurrent ? ' (has it now)' : ''}', style: AlsText.body(15, weight: FontWeight.w900)),
+                        subtitle: Text(
+                          'Queue $queue/${d['maxBacklog']} · on the road $road/${d['maxActive']}${d['cashEnabled'] == true ? ' · takes cash' : ''}'
+                          '${cashOk ? '' : ' · doesn’t take cash'}',
+                        ),
+                        onTap: () => Navigator.pop(context, <String, dynamic>{'driverId': d['driverId']}),
+                      );
+                    },
+                  ),
+              const Divider(height: 28),
+              Text('Driver not on the app', style: AlsText.body(13, color: AlsColors.muted, weight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              TextField(controller: _name, decoration: const InputDecoration(hintText: 'Driver name')),
+              const SizedBox(height: 8),
+              TextField(controller: _phone, decoration: const InputDecoration(hintText: 'Driver phone (optional)')),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () {
+            if (_name.text.trim().isEmpty) return;
+            Navigator.pop(context, <String, dynamic>{'name': _name.text.trim(), if (_phone.text.trim().isNotEmpty) 'phone': _phone.text.trim()});
+          },
+          child: const Text('Assign by name'),
+        ),
+      ],
+    );
+  }
 }

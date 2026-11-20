@@ -135,6 +135,11 @@ export function serializeOrder(o: OrderFull, view: View) {
                 providerFeeCents: o.delivery.providerFeeCents,
                 trackingUrl: o.delivery.trackingUrl,
                 supportRef: o.delivery.supportRef,
+                driverId: o.delivery.driverId,
+                cashDueCents: o.delivery.cashDueCents,
+                assignedAt: o.delivery.assignedAt,
+                pickedUpAt: o.delivery.pickedUpAt,
+                problem: o.delivery.problem,
               }
             : {}),
         }

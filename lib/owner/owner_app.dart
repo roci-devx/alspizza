@@ -19,6 +19,7 @@ import 'screens/menu_page.dart';
 import 'screens/promos_page.dart';
 import 'screens/reports_page.dart';
 import 'screens/settings_page.dart';
+import 'screens/staff_page.dart';
 import 'widgets/owner_ui.dart';
 
 class AlsOwnerApp extends StatefulWidget {
@@ -59,6 +60,7 @@ class _AlsOwnerAppState extends State<AlsOwnerApp> {
 enum OwnerPage {
   dashboard('Dashboard', Icons.space_dashboard_rounded),
   orders('Live orders', Icons.local_fire_department_rounded),
+  staff('Staff & drivers', Icons.badge_rounded),
   menu('Menu', Icons.restaurant_menu_rounded),
   promos('Promo codes', Icons.local_offer_rounded),
   customers('Customers', Icons.people_alt_rounded),
@@ -120,6 +122,7 @@ class _OwnerShellState extends State<OwnerShell> {
     final body = switch (_page) {
       OwnerPage.dashboard => const DashboardPage(),
       OwnerPage.orders => const LiveOrdersPage(),
+      OwnerPage.staff => const StaffPage(),
       OwnerPage.menu => const MenuPage(),
       OwnerPage.promos => const PromosPage(),
       OwnerPage.customers => const CustomersPage(),
@@ -213,7 +216,7 @@ class _OwnerShellState extends State<OwnerShell> {
               decoration: BoxDecoration(color: AlsColors.line, borderRadius: BorderRadius.circular(3)),
             ),
             const SizedBox(height: 8),
-            for (final p in const [OwnerPage.promos, OwnerPage.customers, OwnerPage.settings])
+            for (final p in const [OwnerPage.staff, OwnerPage.promos, OwnerPage.customers, OwnerPage.settings])
               ListTile(
                 leading: Icon(p.icon, color: AlsColors.brown),
                 title: Text(p.label, style: AlsText.body(15, weight: FontWeight.w800)),

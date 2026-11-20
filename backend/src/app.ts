@@ -5,8 +5,10 @@ import { config } from './config.js';
 import { errorHandler, notFound } from './lib/http.js';
 import { MEDIA_DIR, ownerMenuRoutes } from './routes/owner-menu.routes.js';
 import { orderRoutes } from './routes/orders.routes.js';
+import { ownerStaffRoutes } from './routes/owner-staff.routes.js';
 import { ownerRoutes } from './routes/owner.routes.js';
 import { publicRoutes } from './routes/public.routes.js';
+import { staffRoutes } from './routes/staff.routes.js';
 import { webhookRoutes } from './routes/webhooks.routes.js';
 
 export function createApp() {
@@ -42,6 +44,8 @@ export function createApp() {
   app.use('/api', webhookRoutes);
   app.use('/api', ownerMenuRoutes);
   app.use('/api', ownerRoutes);
+  app.use('/api', ownerStaffRoutes);
+  app.use('/api', staffRoutes);
 
   app.use((_req, _res, next) => next(notFound('No such endpoint')));
   app.use(errorHandler);

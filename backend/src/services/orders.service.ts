@@ -12,6 +12,7 @@ import { getPizzaOptions } from '../menu/options.js';
 import { computeTotals, priceLines, type CartLineInput } from '../menu/pricing.js';
 import { postMessage } from './chat.service.js';
 import { cancelDelivery, dispatchDelivery, syncOwnDelivery } from './delivery.service.js';
+import { runDispatch } from './drivers.service.js';
 import { minutesFromNow, pickupEtaMinutes } from './eta.service.js';
 import { loadOrder, orderInclude, publishOrder, setStatus } from './order-core.js';
 import { evaluatePromo } from './promo.service.js';
@@ -159,14 +160,14 @@ export interface PaymentResult {
   provider: 'stripe' | 'paypal' | 'cash' | 'demo';
   ref?: string | null;
   method?: string | null;
-  status?: 'paid' | 'pay_at_pickup';
+  status?: 'paid' | 'pay_at_pickup' | 'pay_on_delivery';
 }
 
 /** Idempotent: webhooks, client sync calls and return URLs may all report the same payment. */
 export async function markPaid(orderId: string, payment: PaymentResult) {
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true, store: true } });
   if (!order) throw notFound('Order not found');
-  if (order.paymentStatus === 'paid' || order.paymentStatus === 'pay_at_pickup') return;
+  if (['paid', 'pay_at_pickup', 'pay_on_delivery'].includes(order.paymentStatus)) return;
   if (order.status === 'cancelled') {
     console.warn(`[orders] payment received for cancelled order #${order.number} — refund manually`);
     return;
@@ -230,6 +231,11 @@ export async function updateStatusByStore(orderId: string, status: string) {
   await setStatus(orderId, status);
   await syncOwnDelivery(orderId, status);
   await publishOrder(orderId);
+  if (status === 'ready') {
+    // Food's ready: if no driver of ours has room, this is when it may overflow to a courier.
+    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { storeId: true, fulfillment: true } });
+    if (order?.fulfillment === 'delivery') await runDispatch(order.storeId);
+  }
 }
 
 export async function cancelOrder(orderId: string, reason = 'Cancelled by the store') {
