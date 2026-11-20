@@ -121,8 +121,12 @@ export async function dispatchDelivery(orderId: string, opts: { excludeOwn?: boo
   }
 
   const quote = order.deliveryQuoteId ? await prisma.deliveryQuote.findUnique({ where: { id: order.deliveryQuoteId } }) : null;
-  const chain = providerChain(order.store, { ...opts, ownOnDuty: opts.excludeOwn ? 0 : await driversOnShiftCount(order.storeId) });
-  const ordered = quote ? [...chain.filter((p) => p.name === quote.provider), ...chain.filter((p) => p.name !== quote.provider)] : chain;
+  const ownOnDuty = opts.excludeOwn ? 0 : await driversOnShiftCount(order.storeId);
+  const chain = providerChain(order.store, { ...opts, ownOnDuty });
+  // Drivers on the clock always come first, even if the customer was quoted a courier before
+  // anyone clocked in. Otherwise prefer whoever gave the quote.
+  const first = ownOnDuty > 0 && chain.some((p) => p.name === 'own') ? 'own' : quote?.provider;
+  const ordered = first ? [...chain.filter((p) => p.name === first), ...chain.filter((p) => p.name !== first)] : chain;
 
   for (const provider of ordered) {
     try {
