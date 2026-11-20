@@ -4,13 +4,16 @@
  * Excel reports have something to show), plus a few live orders.
  *
  *   npm run db:reset      # wipe + seed
+ *
+ * It deletes every table first, so with NODE_ENV=production (a server) it refuses to
+ * run unless SEED_CONFIRM=wipe-everything is set.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import type { Prisma, Store } from '@prisma/client';
-import { DEMO_ACCOUNTS } from '../config.js';
+import { DEMO_ACCOUNTS, config } from '../config.js';
 import { prisma } from '../db.js';
 import { addDays, localDate, startOfLocalDay } from '../lib/time.js';
 import { CATALOG, PIZZA_OPTIONS, catalogDisplayPrice, type SizeId } from '../menu/catalog.js';
@@ -72,6 +75,14 @@ const AREA = ['312', '773', '872', '708', '630', '847'];
 const DRIVERS = ['Marcus T.', 'Priya K.', 'Diego R.', 'Hannah L.', 'Jamal W.', 'Chen Y.', 'Sasha B.'];
 
 async function main() {
+  if (config.isProd && process.env.SEED_CONFIRM !== 'wipe-everything') {
+    console.error(
+      'Refusing to seed: this is a production server and seeding deletes ALL data first.\n' +
+        'If that is really what you want (e.g. resetting a test server), run it with SEED_CONFIRM=wipe-everything.',
+    );
+    process.exit(1);
+  }
+
   console.log('🧹 clearing database…');
   await prisma.$transaction([
     prisma.chatMessage.deleteMany(),

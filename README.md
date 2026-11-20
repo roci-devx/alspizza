@@ -169,7 +169,21 @@ All keys go in `backend/.env` (see `.env.example`). Anything left blank keeps it
 | Google Maps | Geocoding API key (production address search; dev uses OpenStreetMap) | — |
 | SMTP | any SMTP URL for nightly report emails | — |
 
-Production notes: set `NODE_ENV=production`, a strong `JWT_SECRET`, `CORS_ORIGINS`, `API_PUBLIC_URL`, `WEB_APP_URL`; switch Prisma to PostgreSQL (`provider = "postgresql"` in `backend/prisma/schema.prisma`); host the API behind HTTPS (webhooks require it). Re-running `flutter_native_splash` rewrites the Android themes — keep their parents on `Theme.AppCompat.Light.NoActionBar` (Stripe needs it).
+Production notes: set `NODE_ENV=production`, a strong `JWT_SECRET`, `CORS_ORIGINS`, `API_PUBLIC_URL`, `WEB_APP_URL`; use PostgreSQL; host the API behind HTTPS (webhooks require it). Re-running `flutter_native_splash` rewrites the Android themes — keep their parents on `Theme.AppCompat.Light.NoActionBar` (Stripe needs it).
+
+### Server (server1)
+
+The API runs on `server1`, a self-hosted Ubuntu 24.04 box reached over Tailscale, at `https://alspizza-api.rocidevs.com.et` (Cloudflare Tunnel → Caddy → `alspizza.service` on port 4000). Production uses PostgreSQL while local development keeps SQLite: the server's build step switches the Prisma provider, so `schema.prisma` stays on `sqlite` in the repo.
+
+```powershell
+.\backend\deploy.ps1     # ships the last commit of backend/; backs up the DB first, rolls back if the API doesn't start
+```
+
+- Settings and secrets live only on the server, in `/srv/apps/alspizza/shared/.env`; edit it, then `sudo systemctl restart alspizza`.
+- Logs: `ssh server1 journalctl -u alspizza -f`. One-off commands as the app: `ssh server1 sudo app-run alspizza <command>`.
+- Backups: nightly in `/var/backups/apps` (14 days), plus one before every deploy.
+- The seed refuses to run on the server, since it wipes everything. To reset a *test* server deliberately: `ssh server1 sudo app-run alspizza env SEED_CONFIRM=wipe-everything npx tsx src/seed/seed.ts`.
+- The server is set up to host other apps too; see `/srv/README.md` on the box.
 
 ## Menu & photos
 
