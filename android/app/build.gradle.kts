@@ -29,6 +29,12 @@ android {
         versionName = flutter.versionName
     }
 
+    // flutter_stripe's lint checks pull in a private Google library (play-services-tapandpay)
+    // that isn't on public Maven, which fails release builds. Skip the optional lint check.
+    lint {
+        checkReleaseBuilds = false
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
